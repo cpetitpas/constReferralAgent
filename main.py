@@ -127,7 +127,6 @@ class ReferralAgentApp(ctk.CTk):
         self.run_button.configure(state="disabled")
         self.log("Starting referral email campaign... (this may take a while)")
 
-        # Run the async agent – blocks UI thread (acceptable for now)
         try:
             asyncio.run(self.run_agent())
         except Exception as e:
@@ -240,31 +239,47 @@ class ReferralAgentApp(ctk.CTk):
             images_base = "C:\\Users\\chris\\constReferralAgent\\images"
 
             prompt = f"""
-You are a professional email designer and copywriter for a trusted construction company.
+You are a professional email designer and copywriter for a trusted, family-owned construction company with over 20 years of experience.
 
-DRY_RUN MODE: {'ACTIVE – IMPORTANT: DO NOT call send_email. Output the COMPLETE HTML <html>...</html> for EACH customer instead, including img tags.' if is_dry else 'OFF – call send_email tool for each customer.'}
+DRY_RUN MODE: {'ACTIVE – IMPORTANT: DO NOT call send_email. Output the COMPLETE HTML <html>...</html> for EACH customer instead, including img tags.' if is_dry else 'OFF – MUST call send_email tool for each customer.'}
 
 Rules for ALL emails:
-- Use full HTML5 structure with inline styles
-- Responsive: body {{{{margin:0; padding:0;}}}} .container {{{{max-width:600px; margin:0 auto;}}}}
+- Full HTML5 structure with inline styles
+- Responsive: body {{margin:0; padding:0;}} .container {{max-width:600px; margin:0 auto;}}
 - Fonts: font-family: Arial, Helvetica, sans-serif;
-- Colors: primary #1d4ed8 (blue), accent #f59e0b (gold), text #1f2937
-- Include header with logo if available: <img src="cid:logo" alt="Company Logo" style="max-width:220px; height:auto; display:block; margin:20px auto;">
-- Greeting: Dear {{customer}},
-- Body: personalized for area_of_interest + matching special & referral reward
-- CTA: large button style <a href="tel:+1YOURPHONE" style="...">Call for Quote</a> or similar
-- Project image: <img src="cid:project_image" alt="Project" style="max-width:100%; height:auto; border-radius:8px; margin:20px 0;"> (use customer's area_of_interest in alt text)
-- Footer: company address, unsubscribe link, etc.
+- Colors: primary blue #1d4ed8, accent gold #f59e0b, text #1f2937
+- Header: include company logo if available <img src="cid:logo" alt="Company Logo" style="max-width:220px;height:auto;display:block;margin:20px auto;">
+- Greeting: Dear [Customer Name],
+- Body MUST:
+  - Thank them sincerely for choosing us for their recent {{area_of_interest}} project
+  - Emphasize the high-quality workmanship, attention to detail, and excellent results they received
+  - Mention our 20+ years of trusted experience and strong focus on customer satisfaction
+  - Promote referrals naturally: position the referral reward as our way of thanking loyal customers who love our work and want to help others experience the same quality
+  - Mention the current monthly specials: these are general offers available to anyone this month (do NOT phrase as "your next {{area_of_interest}} project" — use neutral language like "your next project" or "any future project in that category")
+- CTA: large button e.g. <a href="tel:+15551234567" style="background:#1d4ed8;color:white;padding:15px 30px;text-decoration:none;border-radius:8px;display:inline-block;font-weight:bold;">Call for Your Next Project</a>
+- Project image: <img src="cid:project_image" alt="{{area_of_interest}} Project" style="max-width:100%;height:auto;border-radius:8px;margin:20px 0;">
+- Footer: physical address, unsubscribe link, copyright
 
-Available images (use exact paths):
-- Logo: "{logo_path}" (only if path is non-empty)
-- Project images (match to customer's area_of_interest exactly):
-  - kitchen → "{images_base}\\kitchen.png"
-  - bathroom → "{images_base}\\bathroom.png"
-  - deck → "{images_base}\\deck.png"
-  - fencing → "{images_base}\\fencing.png"
-  - addition → "{images_base}\\addition.png"
-  (If area doesn't match exactly, use kitchen.png as fallback)
+CRITICAL: SPECIALS & REWARDS LOGIC
+- The specials in specials JSON are **current monthly promotions**, each tied to an area_of_interest
+- They are available to **all customers** this month — not personalized to the recipient's past project
+- For each customer, look up the special that matches their area_of_interest (case-insensitive)
+- Phrase it neutrally, e.g.:
+  "Plus, take advantage of our current monthly special: 10% off materials on any bathroom project."
+  or
+  "Don't miss our monthly offer: Free vanity upgrade on your next bathroom remodel!"
+- Use the exact wording from the specials JSON for special and referral_reward
+- If no exact match: use the closest or kitchen special, and mention it as a general offer
+
+Available images (use exact paths – embed only if file exists):
+- Logo: "{logo_path}" (embed as cid:logo only if path is non-empty)
+- Project images (match exactly to customer's area_of_interest for the thank-you image):
+  kitchen    → "{images_base}\\kitchen.png"
+  bathroom   → "{images_base}\\bathroom.png"
+  deck       → "{images_base}\\deck.png"
+  fencing    → "{images_base}\\fencing.png"
+  addition   → "{images_base}\\addition.png"
+  fallback   → "{images_base}\\kitchen.png"
 
 Customers (JSON):
 {customers_json}
@@ -274,21 +289,23 @@ Specials (JSON):
 
 Extra user instructions: {extra or "None"}
 
-Task:
-For each customer:
-- Create one personalized email
-- If dry-run: output the full HTML code for that email
-- If NOT dry-run: call send_email tool **once per customer** with parameters:
-  - to_email
-  - subject
-  - html_body = the complete HTML string
-  - embedded_images = dict with keys "logo" and/or "project_image" → values = the full file path from above (only include if path exists and is valid)
+Task – for EACH customer:
+1. Personalize the thank-you / quality / experience part using their past area_of_interest
+2. Use the matching monthly special and referral reward from specials JSON, phrased as general current-month offers
+3. ALWAYS include images via the embedded_images parameter when NOT in dry-run mode
+4. If dry-run → output full HTML only
+5. If NOT dry-run → you MUST call send_email **exactly once per customer** and you MUST include the embedded_images dict with:
+   - key "logo" → value = the full path "{logo_path}" (only if non-empty)
+   - key "project_image" → value = the full path "{images_base}\\" + lowercase(area_of_interest) + ".png"
+     (example for bathroom: "C:\\Users\\chris\\constReferralAgent\\images\\bathroom.png")
+   - Do NOT use variables or placeholders like {{area_of_interest}} in the actual dict — replace with the real value
+   - Only include keys for paths that exist
 
 Process all customers now.
 """
 
             self.log("Sending prompt to agent...")
-            await self.session.send_and_wait({"prompt": prompt})
+            await self.session.send_and_wait({"prompt": prompt}, timeout=300)  # increase timeout for long-running tasks
 
             self.log("Prompt sent. Waiting for streaming/tool events... (watch for 'Stream chunk', 'Full assistant message', or tool logs)")
             await asyncio.sleep(10)  # give time for final idle/tool events to arrive
