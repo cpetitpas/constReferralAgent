@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 from copilot import CopilotClient
 from tools import send_email
 import json
-import time  # only used for small UI breathing room if needed
+import time
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -16,13 +16,23 @@ class ReferralAgentApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Construction Referral Email Agent")
-        self.geometry("1100x800")
+        self.geometry("2200x1200")
         self.client = None
         self.session = None
         self.customers_df = None
         self.specials_df = None
 
         self.create_widgets()
+
+    def select_logo(self):
+        path = filedialog.askopenfilename(
+            title="Select Company Logo",
+            filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg *.jpeg"), ("All images", "*.*")]
+        )
+        if path:
+            self.logo_entry.delete(0, "end")
+            self.logo_entry.insert(0, path)
+            self.log(f"Logo selected: {path}")
 
     def create_widgets(self):
         # Title
@@ -35,17 +45,30 @@ class ReferralAgentApp(ctk.CTk):
         ctk.CTkButton(file_frame, text="Select Customers CSV", command=self.load_customers).pack(side="left", padx=10, pady=10)
         ctk.CTkButton(file_frame, text="Select Specials CSV", command=self.load_specials).pack(side="left", padx=10, pady=10)
 
-        # Previews
+        # Customers preview
         self.customer_label = ctk.CTkLabel(self, text="Customers loaded: 0")
         self.customer_label.pack(pady=5)
 
-        self.preview_text = ctk.CTkTextbox(self, height=150)
-        self.preview_text.pack(pady=10, padx=20, fill="x")
+        self.customer_preview = ctk.CTkTextbox(self, height=150)
+        self.customer_preview.pack(pady=10, padx=20, fill="x")
+
+        # Specials preview
+        self.specials_label = ctk.CTkLabel(self, text="Specials loaded: 0")
+        self.specials_label.pack(pady=5)
+
+        self.specials_preview = ctk.CTkTextbox(self, height=150)
+        self.specials_preview.pack(pady=10, padx=20, fill="x")
 
         # Instructions
         ctk.CTkLabel(self, text="Additional Instructions (optional):").pack(anchor="w", padx=20)
         self.instructions = ctk.CTkTextbox(self, height=80)
         self.instructions.pack(pady=5, padx=20, fill="x")
+
+        # Company logo
+        ctk.CTkLabel(self, text="Company Logo (.png, optional):").pack(anchor="w", padx=20, pady=(10,0))
+        self.logo_entry = ctk.CTkEntry(self, width=500)
+        self.logo_entry.pack(pady=5, padx=20, fill="x")
+        ctk.CTkButton(self, text="Browse for Logo", command=self.select_logo).pack(anchor="w", padx=20, pady=5)
 
         # Controls
         control_frame = ctk.CTkFrame(self)
@@ -63,13 +86,13 @@ class ReferralAgentApp(ctk.CTk):
         self.progress.pack(pady=10, padx=20, fill="x")
         self.progress.set(0)
 
-        self.log_text = ctk.CTkTextbox(self, height=300)
+        self.log_text = ctk.CTkTextbox(self, height=200)  # reduced height a bit to fit previews
         self.log_text.pack(pady=10, padx=20, fill="both", expand=True)
 
     def log(self, message):
         self.log_text.insert("end", message + "\n")
         self.log_text.see("end")
-        self.update_idletasks()  # Helps keep UI responsive during long runs
+        self.update_idletasks()
 
     def load_customers(self):
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -77,8 +100,8 @@ class ReferralAgentApp(ctk.CTk):
             try:
                 self.customers_df = pd.read_csv(path)
                 self.customer_label.configure(text=f"Customers loaded: {len(self.customers_df)}")
-                self.preview_text.delete("1.0", "end")
-                self.preview_text.insert("end", self.customers_df.head(10).to_string(index=False))
+                self.customer_preview.delete("1.0", "end")
+                self.customer_preview.insert("end", self.customers_df.head(10).to_string(index=False))
                 self.log(f"Customers file loaded: {len(self.customers_df)} records")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load customers CSV:\n{e}")
@@ -88,7 +111,11 @@ class ReferralAgentApp(ctk.CTk):
         if path:
             try:
                 self.specials_df = pd.read_csv(path)
-                self.log(f"Specials loaded: {len(self.specials_df)} areas of interest")
+                count = len(self.specials_df)
+                self.specials_label.configure(text=f"Specials loaded: {count}")
+                self.specials_preview.delete("1.0", "end")
+                self.specials_preview.insert("end", self.specials_df.head(10).to_string(index=False))
+                self.log(f"Specials loaded: {count} areas of interest")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load specials CSV:\n{e}")
 
@@ -206,30 +233,59 @@ class ReferralAgentApp(ctk.CTk):
                 if is_dry else ""
             )
 
-            prompt = f"""You are an expert, warm, professional email copywriter for a trusted local construction company.
+            logo_path = self.logo_entry.get().strip() if hasattr(self, 'logo_entry') and self.logo_entry.get().strip() else ""
+            logo_info = f"Company logo path: '{logo_path}' (embed as cid:logo if path exists)" if logo_path else "No company logo provided"
 
-Current customers (name, email, area_of_interest):
+            # Base folder for project images (adjust if your folder is different)
+            images_base = "C:\\Users\\chris\\constReferralAgent\\images"
+
+            prompt = f"""
+You are a professional email designer and copywriter for a trusted construction company.
+
+DRY_RUN MODE: {'ACTIVE – IMPORTANT: DO NOT call send_email. Output the COMPLETE HTML <html>...</html> for EACH customer instead, including img tags.' if is_dry else 'OFF – call send_email tool for each customer.'}
+
+Rules for ALL emails:
+- Use full HTML5 structure with inline styles
+- Responsive: body {{{{margin:0; padding:0;}}}} .container {{{{max-width:600px; margin:0 auto;}}}}
+- Fonts: font-family: Arial, Helvetica, sans-serif;
+- Colors: primary #1d4ed8 (blue), accent #f59e0b (gold), text #1f2937
+- Include header with logo if available: <img src="cid:logo" alt="Company Logo" style="max-width:220px; height:auto; display:block; margin:20px auto;">
+- Greeting: Dear {{customer}},
+- Body: personalized for area_of_interest + matching special & referral reward
+- CTA: large button style <a href="tel:+1YOURPHONE" style="...">Call for Quote</a> or similar
+- Project image: <img src="cid:project_image" alt="Project" style="max-width:100%; height:auto; border-radius:8px; margin:20px 0;"> (use customer's area_of_interest in alt text)
+- Footer: company address, unsubscribe link, etc.
+
+Available images (use exact paths):
+- Logo: "{logo_path}" (only if path is non-empty)
+- Project images (match to customer's area_of_interest exactly):
+  - kitchen → "{images_base}\\kitchen.png"
+  - bathroom → "{images_base}\\bathroom.png"
+  - deck → "{images_base}\\deck.png"
+  - fencing → "{images_base}\\fencing.png"
+  - addition → "{images_base}\\addition.png"
+  (If area doesn't match exactly, use kitchen.png as fallback)
+
+Customers (JSON):
 {customers_json}
 
-This month's specials & referral rewards (match by area_of_interest):
+Specials (JSON):
 {specials_json}
 
 Extra user instructions: {extra or "None"}
 
-{dry_run_note}
+Task:
+For each customer:
+- Create one personalized email
+- If dry-run: output the full HTML code for that email
+- If NOT dry-run: call send_email tool **once per customer** with parameters:
+  - to_email
+  - subject
+  - html_body = the complete HTML string
+  - embedded_images = dict with keys "logo" and/or "project_image" → values = the full file path from above (only include if path exists and is valid)
 
-Instructions:
-- For each customer, create ONE personalized referral email
-- Naturally mention their past area of interest
-- Highlight the matching monthly special
-- Gently encourage referring friends/family with the reward
-- Friendly tone, clear call-to-action (reply / call / visit website)
-- Always include a CAN-SPAM footer with company physical address and unsubscribe instructions
-
-If NOT dry-run: use the send_email tool for each customer.
-If dry-run: do NOT use the tool — print each email clearly instead.
-
-Process all customers in this single interaction."""
+Process all customers now.
+"""
 
             self.log("Sending prompt to agent...")
             await self.session.send_and_wait({"prompt": prompt})
